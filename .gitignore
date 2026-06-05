@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments and local dependency caches
+venv/
+.venv/
+env/
+.env/
+.env.*
+!.env.example
+
+# Runtime benchmark outputs
+result/
+factors/
+task/
+temp/
+usage/
+logs/
+
+# Local editor and OS files
+.DS_Store
+.vscode/
+.idea/
+
+# Local credentials
+*.key
+*.pem
+credentials.json
+auth.json
+service-account*.json

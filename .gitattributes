@@ -1,0 +1,9 @@
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gds binary
+*.lyp text
+*.lydrc text
+*.json text
+*.py text
+*.md text
