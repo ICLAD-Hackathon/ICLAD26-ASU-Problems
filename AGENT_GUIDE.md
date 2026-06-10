@@ -155,6 +155,27 @@ The agent must:
 
 The output file must contain valid Python only. Do not write markdown fences, explanations, logs, or JSON wrappers into the repaired script.
 
+## Custom Agent Tools
+
+The provided starter agent is intentionally minimal and demonstrates a
+chat-style interaction with the benchmark model endpoint. Participants may
+customize their agents beyond this example.
+
+Custom agents may add local tools that help inspect, modify, and validate the
+layout repair, including:
+
+- KLayout execution tools for rendering layouts, running DRC, or checking
+  intermediate repaired scripts.
+- File read tools for loading the layout script, DRC report, design rules,
+  screenshot metadata, connectivity file, or intermediate artifacts.
+- File write tools for creating repaired scripts, temporary candidate scripts,
+  logs, summaries, or other files under `temp_dir`.
+
+These tools are part of the participant's agent implementation. They do not
+change the required benchmark interface: the agent must still read `info.json`,
+send model requests through `model_endpoint`, and write the final repaired
+Python script to `output_path`.
+
 ## Vertex AI Express Mode Setup
 
 1. Open the contest-provided Vertex AI Express Mode onboarding page.
