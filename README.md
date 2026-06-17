@@ -150,6 +150,31 @@ Each report includes raw DRC/connectivity metrics and Greek-letter factors:
 - `δ`: new violation rate, new violations introduced divided by original violations
 - `ε`: final violation rate, final violations divided by original violations
 
+## Scoring Policy
+
+Submissions are scored using a gated lexicographic policy. A repaired script is
+eligible for DRC-quality scoring for a case only if it satisfies both
+eligibility conditions:
+
+1. **Valid evaluation**: the evaluator must be able to render the repaired script
+   with KLayout, run the ASAP7 DRC deck, and parse the resulting DRC report.
+2. **Connectivity preservation**: the connectivity traced from the repaired
+   script must preserve the reference connectivity provided for the case.
+
+Submissions that do not satisfy either eligibility condition are not eligible
+for DRC-quality scoring for that case, regardless of their DRC violation
+metrics.
+
+Among eligible submissions, score comparison is determined lexicographically:
+
+1. Lower `final_violation_rate` is better.
+2. If `final_violation_rate` is equal, higher `repair_rate` is better.
+
+**Token-cost disclaimer:** token usage is recorded by the benchmark model
+service, but token cost is not included in the current ASU block-repair scoring
+policy. Token-cost scoring will be documented separately if it is added in a
+future update.
+
 See [evaluator/README.md](./evaluator/README.md) for factor definitions.
 
 ## Build Your Own Agent

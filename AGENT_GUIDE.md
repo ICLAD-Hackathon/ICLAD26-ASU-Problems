@@ -155,6 +155,26 @@ The agent must:
 
 The output file must contain valid Python only. Do not write markdown fences, explanations, logs, or JSON wrappers into the repaired script.
 
+## Evaluation Priority
+
+ASU block-repair submissions are evaluated using a gated lexicographic scoring
+policy.
+
+A repaired script is eligible for DRC-quality scoring only if it satisfies both
+eligibility conditions:
+
+1. The repaired script must complete the evaluation flow: KLayout render, ASAP7
+   DRC execution, and DRC report parsing.
+2. The repaired script must preserve the reference connectivity for the case.
+
+Submissions that do not satisfy either condition are not eligible for
+DRC-quality scoring for that case. Among eligible submissions, lower final
+violation rate is better. Repair rate is used as the tie-breaker when final
+violation rates are equal.
+
+Agents should therefore prioritize preserving a runnable KLayout script and the
+provided connectivity reference before optimizing DRC violation counts.
+
 ## Custom Agent Tools
 
 The provided starter agent is intentionally minimal and demonstrates a

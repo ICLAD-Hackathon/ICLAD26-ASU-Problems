@@ -80,6 +80,7 @@ def write_counts_json(path, case_name, counts):
 def calculate_drc_metrics(original, repaired):
     original_violations = sum(original.values())
     final_violations = sum(repaired.values())
+    final_violation_rate = ratio(final_violations, original_violations)
 
     if original_violations == 0:
         removed_violations = 0
@@ -103,6 +104,7 @@ def calculate_drc_metrics(original, repaired):
     return {
         "repair_rate": repair_rate,
         "new_violation_rate": new_violation_rate,
+        "final_violation_rate": final_violation_rate,
         "original_violations": original_violations,
         "final_violations": final_violations,
         "removed_violations": removed_violations,
@@ -224,9 +226,6 @@ def ratio(numerator, denominator):
 
 
 def build_factors(report):
-    original_violations = report.get("original_violations")
-    final_violations = report.get("final_violations")
-
     return {
         "α": {
             "name": "valid_evaluation",
@@ -255,14 +254,64 @@ def build_factors(report):
         "ε": {
             "name": "final_violation_rate",
             "description": "Final DRC violations divided by original DRC violations.",
-            "raw_value": ratio(final_violations, original_violations),
+            "raw_value": report.get("final_violation_rate"),
             "direction": "minimize",
+        },
+    }
+
+
+def build_scoring(report):
+    if not report.get("valid_repair"):
+        eligible = False
+        reason = "invalid_evaluation"
+    elif report.get("connectivity_preserved") is not True:
+        eligible = False
+        reason = "connectivity_not_preserved"
+    else:
+        eligible = True
+        reason = None
+
+    return {
+        "policy": "gated_lexicographic_score",
+        "eligible_for_scoring": eligible,
+        "score_exclusion_reason": reason,
+        "eligibility_conditions": [
+            {
+                "field": "valid_evaluation",
+                "description": "The repaired script completed KLayout render, DRC execution, and DRC report parsing.",
+                "satisfied": bool(report.get("valid_repair")),
+            },
+            {
+                "field": "connectivity_preserved",
+                "description": "The repaired script preserved the reference connectivity for the case.",
+                "satisfied": report.get("connectivity_preserved") is True,
+            },
+        ],
+        "score_order": [
+            {
+                "field": "final_violation_rate",
+                "direction": "minimize",
+                "priority": 1,
+                "description": "Primary score comparison metric among eligible submissions.",
+            },
+            {
+                "field": "repair_rate",
+                "direction": "maximize",
+                "priority": 2,
+                "role": "tie_breaker",
+                "description": "Tie-breaker when final violation rates are equal.",
+            },
+        ],
+        "score_values": {
+            "final_violation_rate": report.get("final_violation_rate") if eligible else None,
+            "repair_rate": report.get("repair_rate") if eligible else None,
         },
     }
 
 
 def finalize_factor_report(report):
     report["factors"] = build_factors(report)
+    report["scoring"] = build_scoring(report)
     return report
 
 
