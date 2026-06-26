@@ -6,10 +6,10 @@ This guide explains what an agent is in this benchmark and how to connect one to
 
 The runner-agent interface is defined by this benchmark. It is not a Vertex AI API standard.
 
-The runner creates an `info.json` file, starts or provides a local model endpoint, invokes the agent with the path to `info.json`, and evaluates the repaired script written by the agent.
+The runner creates an `info.json` file, starts the local benchmark model service, invokes the agent with the path to `info.json`, and evaluates the repaired script written by the agent. The agent-facing `model_endpoint` is always the benchmark wrapper. During development, the wrapper may forward requests to a participant-provided upstream endpoint.
 
 ```text
-runner -> info.json -> agent -> model_endpoint -> agent -> output_path -> evaluator
+runner -> info.json -> agent -> model_endpoint wrapper -> upstream model -> agent -> output_path -> evaluator
 ```
 
 ## Agent Invocation
@@ -64,7 +64,7 @@ Fields:
 |---|---|
 | `model_name` | Run identifier used for output folders |
 | `model` | Default model name for model endpoint requests |
-| `model_endpoint` | Local benchmark model service base URL |
+| `model_endpoint` | Local benchmark model service base URL. Agents must call this endpoint, not an upstream provider directly. |
 | `case_name` | Benchmark block name |
 | `design_type` | Design category, currently `block` |
 | `task_type` | Task category, currently `repair` |
@@ -90,7 +90,7 @@ Request JSON:
 
 ```json
 {
-  "model": "gemini-3-flash-preview",
+  "model": "gemini-3.5-flash",
   "prompt": "model prompt text",
   "max_output_tokens": 8192
 }
@@ -100,16 +100,30 @@ Request fields:
 
 | Field | Required | Meaning |
 |---|---:|---|
-| `model` | yes | Model name passed through to Vertex AI Express Mode |
+| `model` | yes | Model name requested through the benchmark wrapper |
 | `prompt` | yes | Prompt text prepared by the agent |
 | `max_output_tokens` | no | Maximum model response tokens |
+
+The benchmark wrapper enforces per-case request limits. By default, each case
+allows up to 64 model calls, 200,000 prompt characters per call, and 300,000
+request bytes per call.
 
 Response JSON:
 
 ```json
 {
   "text": "model response text",
-  "diagnostics": {}
+  "diagnostics": {},
+  "usage": {
+    "input_tokens": 123,
+    "output_tokens": 456,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "thoughts_tokens": 0,
+    "tool_use_prompt_tokens": 0,
+    "total_tokens": 579,
+    "usage_source": "provider"
+  }
 }
 ```
 
@@ -119,8 +133,13 @@ Response fields:
 |---|---|
 | `text` | Model response text |
 | `diagnostics` | Endpoint diagnostics for the model call |
+| `usage` | Per-call token usage normalized by the benchmark wrapper |
 
-Token usage is recorded by the benchmark model service under `usage/<run-id>/block/repair/`.
+Token usage is recorded by the benchmark model service under `usage/<run-id>/block/repair/`. If a development upstream does not report usage, the wrapper records an estimated usage value with `"usage_source": "estimated"`.
+
+For official evaluation, token usage and scoring artifacts are controlled by the
+evaluation environment and should not be writable by submitted agent code. The
+local `usage/` and `factors/` directories are for development convenience.
 
 Error response JSON:
 
@@ -142,7 +161,7 @@ Error fields:
 | `provider` | Upstream provider name when the error came from a model provider |
 | `provider_status` | Upstream provider status code when available |
 
-The benchmark model service returns retryable Vertex AI errors, including rate-limit responses, to the agent. Agents are responsible for retry policy and backoff behavior.
+The benchmark model service returns retryable upstream errors, including rate-limit responses, to the agent. Agents are responsible for retry policy and backoff behavior.
 
 ## Agent Responsibilities
 
@@ -212,11 +231,13 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Set your key in the shell that will run the benchmark:
+Set your key in the shell that will run the benchmark when using the default Vertex-backed model service:
 
 ```bash
 export EXPRESS_MODE_KEY="your_actual_api_key_here"
 ```
+
+This key is not required when using `--upstream-endpoint` to forward development runs to your own model service.
 
 ## Starter Agent
 
@@ -231,6 +252,16 @@ Run it through the benchmark runner:
 ```bash
 python3 scripts/run_block_benchmark.py --case Block1
 ```
+
+Use a development upstream model endpoint:
+
+```bash
+python3 scripts/run_block_benchmark.py \
+  --case Block1 \
+  --upstream-endpoint http://127.0.0.1:9000
+```
+
+The upstream endpoint must implement the same `POST /generate` JSON contract described above. The runner still writes only the local benchmark wrapper URL into `info.json`, so the agent code does not change. The older `--model-endpoint` flag is accepted as a deprecated alias for `--upstream-endpoint`.
 
 The starter agent reads the layout script, DRC report, DRC rule file, and connectivity reference listed in `info.json`, sends a repair prompt to `model_endpoint`, applies valid local edits, and writes the repaired script to `output_path`.
 
@@ -250,3 +281,25 @@ python3 scripts/run_block_benchmark.py \
 ```
 
 Your `agent/my_agent.py` should implement the required interface described above.
+
+## Final Submission Checklist
+
+Submit a directory, not generated benchmark output:
+
+```text
+submission/
+  agent.py
+  requirements.txt    optional
+  README.md           optional
+```
+
+`agent.py` must support:
+
+```bash
+python3 agent.py <info_json> --model <model_name>
+```
+
+Include `requirements.txt` only for Python packages needed by the agent. The
+official runner installs those packages before the isolated agent run. Do not
+include API keys, local credentials, `venv/`, `result/`, `task/`, `temp/`,
+`usage/`, `factors/`, `logs/`, or `__pycache__/`.

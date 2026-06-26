@@ -6,6 +6,7 @@
 |---|---:|---|
 | Python | 3.10 or newer | Runner, starter agent, and evaluator scripts |
 | KLayout | 0.30.1 | Rendering repaired layout scripts and running ASAP7 DRC |
+| Docker | Current stable release | Organizer-only official evaluation isolation |
 
 Verify KLayout:
 
@@ -33,8 +34,11 @@ The Python dependencies are listed in `requirements.txt`.
 
 ## Vertex AI Express Mode
 
-The benchmark model service uses Vertex AI Express Mode through the Google GenAI SDK. Set the API key in the shell that runs the benchmark:
+The default benchmark model service uses Vertex AI Express Mode through the
+Google GenAI SDK. Set the API key in the shell that runs the benchmark:
 
 ```bash
 export EXPRESS_MODE_KEY="your_actual_api_key_here"
 ```
+
+This key is not needed for development runs that use `--upstream-endpoint`.

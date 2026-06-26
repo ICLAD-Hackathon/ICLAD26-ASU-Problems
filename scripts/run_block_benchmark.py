@@ -10,34 +10,13 @@ import time
 import urllib.request
 from pathlib import Path
 
+from benchmark_common import available_blocks, repo_root, validate_safe_id
 
 DEFAULT_RUN_ID = "vertexai-express"
 DEFAULT_AGENT_PATH = "agent/vertexai_express_agent.py"
-
-
-def repo_root():
-    return Path(__file__).resolve().parents[1]
-
-
-def available_blocks(root):
-    block_dir = root / "testcase" / "asap7" / "block"
-    blocks = []
-    for layout_path in sorted((block_dir / "layout_script").glob("Block*.py"), key=block_sort_key):
-        case_name = layout_path.stem
-        required_paths = [
-            layout_path,
-            block_dir / "drc_report" / f"{case_name}.drc.json",
-            block_dir / "connectivity" / f"{case_name}.json",
-            block_dir / "layout_screenshot" / case_name / f"{case_name}.png",
-        ]
-        if all(path.is_file() for path in required_paths):
-            blocks.append(case_name)
-    return blocks
-
-
-def block_sort_key(path):
-    suffix = path.stem.removeprefix("Block")
-    return (0, int(suffix)) if suffix.isdigit() else (1, path.stem)
+AGENT_SECRET_ENV_KEYS = (
+    "EXPRESS_MODE_KEY",
+)
 
 
 def write_info(root, case_name, run_id, model_name, model_endpoint=""):
@@ -92,7 +71,10 @@ def run_agent(agent_path, info_path, model):
         "--model",
         model,
     ]
-    subprocess.run(cmd, check=True)
+    env = os.environ.copy()
+    for key in AGENT_SECRET_ENV_KEYS:
+        env.pop(key, None)
+    subprocess.run(cmd, check=True, env=env)
 
 
 def find_free_port():
@@ -119,7 +101,7 @@ def wait_for_service(endpoint, process, timeout_seconds=20):
 
 
 @contextlib.contextmanager
-def model_service(root, info_path, model):
+def model_service(root, info_path, model, upstream_endpoint=""):
     info = read_info(info_path)
     port = find_free_port()
     endpoint = f"http://127.0.0.1:{port}"
@@ -141,6 +123,8 @@ def model_service(root, info_path, model):
         "--usage-path",
         info["usage_path"],
     ]
+    if upstream_endpoint:
+        cmd.extend(["--upstream-endpoint", upstream_endpoint])
     env = os.environ.copy()
     process = subprocess.Popen(cmd, env=env)
     try:
@@ -161,7 +145,7 @@ def main():
     blocks = available_blocks(root)
     parser = argparse.ArgumentParser(description="Run the ICLAD 2026 block repair benchmark")
     parser.add_argument("--case", choices=blocks, help="Run one available block. Defaults to all available blocks.")
-    parser.add_argument("--model", default="gemini-3-flash-preview")
+    parser.add_argument("--model", default="gemini-3.5-flash")
     parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
     parser.add_argument(
         "--agent-path",
@@ -169,9 +153,20 @@ def main():
         help="Agent executable path relative to the repository root.",
     )
     parser.add_argument(
+        "--upstream-endpoint",
+        default="",
+        help=(
+            "Use an existing model endpoint as the upstream behind the benchmark "
+            "wrapper. Agents still receive and call the local wrapper endpoint."
+        ),
+    )
+    parser.add_argument(
         "--model-endpoint",
         default="",
-        help="Use an existing benchmark model endpoint instead of starting one.",
+        help=(
+            "Deprecated alias for --upstream-endpoint. The endpoint is routed "
+            "through the benchmark wrapper and is not written directly to info.json."
+        ),
     )
     parser.add_argument(
         "--prepare-only",
@@ -184,7 +179,15 @@ def main():
     if not blocks:
         raise SystemExit("No complete benchmark blocks found under testcase/asap7/block.")
 
-    run_id = args.run_id
+    run_id = validate_safe_id(args.run_id, "run-id")
+    if args.model_endpoint and args.upstream_endpoint and args.model_endpoint != args.upstream_endpoint:
+        raise SystemExit("--model-endpoint and --upstream-endpoint cannot point to different URLs.")
+    upstream_endpoint = args.upstream_endpoint or args.model_endpoint
+    if args.model_endpoint:
+        print(
+            "[WARN] --model-endpoint is deprecated; treating it as --upstream-endpoint "
+            "so calls still go through the benchmark wrapper."
+        )
     agent_path = Path(args.agent_path)
     if not agent_path.is_absolute():
         agent_path = root / agent_path
@@ -193,17 +196,15 @@ def main():
     cases = [args.case] if args.case else blocks
 
     for case_name in cases:
-        info_path, output_path = write_info(root, case_name, run_id, args.model, args.model_endpoint)
+        info_path, output_path = write_info(root, case_name, run_id, args.model)
         print(f"[INFO] Wrote case info: {info_path}")
         print(f"[INFO] Expected output: {output_path}")
         if not args.prepare_only:
-            if args.model_endpoint:
-                print(f"[INFO] Model endpoint: {args.model_endpoint}")
+            with model_service(root, info_path, args.model, upstream_endpoint) as endpoint:
+                print(f"[INFO] Model endpoint: {endpoint}")
+                if upstream_endpoint:
+                    print(f"[INFO] Upstream endpoint: {upstream_endpoint}")
                 run_agent(agent_path, info_path, args.model)
-            else:
-                with model_service(root, info_path, args.model) as endpoint:
-                    print(f"[INFO] Model endpoint: {endpoint}")
-                    run_agent(agent_path, info_path, args.model)
 
 
 if __name__ == "__main__":

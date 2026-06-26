@@ -9,32 +9,15 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from benchmark_common import available_blocks, repo_root, validate_safe_id
+
 DEFAULT_RUN_ID = "vertexai-express"
 REQUIRED_KLAYOUT_VERSION = "0.30.1"
-
-
-def repo_root():
-    return Path(__file__).resolve().parents[1]
-
-
-def available_blocks(root):
-    block_dir = root / "testcase" / "asap7" / "block"
-    blocks = []
-    for layout_path in sorted((block_dir / "layout_script").glob("Block*.py"), key=block_sort_key):
-        case_name = layout_path.stem
-        required_paths = [
-            layout_path,
-            block_dir / "drc_report" / f"{case_name}.drc.json",
-            block_dir / "connectivity" / f"{case_name}.json",
-        ]
-        if all(path.is_file() for path in required_paths):
-            blocks.append(case_name)
-    return blocks
-
-
-def block_sort_key(path):
-    suffix = path.stem.removeprefix("Block")
-    return (0, int(suffix)) if suffix.isdigit() else (1, path.stem)
+MAX_REPAIRED_SCRIPT_BYTES = 5_000_000
+MAX_LOG_CHARS = 500_000
+KLAYOUT_RENDER_TIMEOUT_SECONDS = 300
+KLAYOUT_DRC_TIMEOUT_SECONDS = 600
 
 
 def read_original_counts(path):
@@ -149,16 +132,38 @@ def require_klayout():
         )
 
 
-def run_command(cmd, label, log_path):
+def normalize_subprocess_output(output):
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return str(output)
+
+
+def write_limited_log(log_path, output):
+    text = normalize_subprocess_output(output)
+    if len(text) > MAX_LOG_CHARS:
+        text = text[:MAX_LOG_CHARS] + f"\n[truncated to {MAX_LOG_CHARS} chars]\n"
+    log_path.write_text(text, encoding="utf-8")
+
+
+def run_command(cmd, label, log_path, timeout_seconds):
     print(f"[INFO] {label}: {' '.join(str(part) for part in cmd)}", flush=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    completed = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    log_path.write_text(completed.stdout or "", encoding="utf-8")
+    try:
+        completed = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        write_limited_log(log_path, exc.stdout)
+        print(f"[INFO] {label} log: {log_path}", flush=True)
+        raise RuntimeError(f"{label} timed out after {timeout_seconds}s")
+
+    write_limited_log(log_path, completed.stdout)
     print(f"[INFO] {label} log: {log_path}", flush=True)
     if completed.returncode != 0:
         raise RuntimeError(f"{label} failed with exit code {completed.returncode}")
@@ -178,6 +183,7 @@ def run_klayout_drc(gds_path, rule_path, report_path, log_path):
         ],
         "KLayout DRC",
         log_path,
+        KLAYOUT_DRC_TIMEOUT_SECONDS,
     )
 
 
@@ -345,6 +351,15 @@ def evaluate_case(root, run_id, case_name):
         report["invalid_reason"] = "repaired_script_missing_or_empty"
         write_factor_report(factors_path, report)
         return False
+    repaired_script_size = repaired_script.stat().st_size
+    report["repaired_script_size_bytes"] = repaired_script_size
+    if repaired_script_size > MAX_REPAIRED_SCRIPT_BYTES:
+        report["invalid_reason"] = (
+            f"repaired_script_too_large: {repaired_script_size} bytes "
+            f"> {MAX_REPAIRED_SCRIPT_BYTES} byte limit"
+        )
+        write_factor_report(factors_path, report)
+        return False
 
     connectivity = evaluate_connectivity(connectivity_json, repaired_script)
     merge_connectivity(report, connectivity)
@@ -360,7 +375,12 @@ def evaluate_case(root, run_id, case_name):
     try:
         require_klayout()
         prepare_render_script(repaired_script, render_script, gds_path)
-        run_command(["klayout", "-b", "-r", str(render_script)], "KLayout render", render_log)
+        run_command(
+            ["klayout", "-b", "-r", str(render_script)],
+            "KLayout render",
+            render_log,
+            KLAYOUT_RENDER_TIMEOUT_SECONDS,
+        )
         run_klayout_drc(gds_path, rule_path, lyrpt_path, drc_log)
         repaired_counts = read_lyrpt_counts(lyrpt_path)
         write_counts_json(repaired_drc_json, case_name, repaired_counts)
@@ -381,7 +401,7 @@ def evaluate_case(root, run_id, case_name):
 
 def main():
     root = repo_root()
-    blocks = available_blocks(root)
+    blocks = available_blocks(root, require_screenshot=False)
     parser = argparse.ArgumentParser(description="Calculate block repair evaluation factors")
     parser.add_argument("--case", choices=blocks, help="Evaluate one available block. Defaults to all available blocks.")
     parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
@@ -390,11 +410,12 @@ def main():
     if not blocks:
         raise SystemExit("No complete benchmark blocks found under testcase/asap7/block.")
 
+    run_id = validate_safe_id(args.run_id, "run-id")
     cases = [args.case] if args.case else blocks
     ok = True
     for case_name in cases:
-        print(f"[INFO] Evaluating {case_name} for run_id={args.run_id}", flush=True)
-        ok = evaluate_case(root, args.run_id, case_name) and ok
+        print(f"[INFO] Evaluating {case_name} for run_id={run_id}", flush=True)
+        ok = evaluate_case(root, run_id, case_name) and ok
 
     if not ok:
         sys.exit(1)

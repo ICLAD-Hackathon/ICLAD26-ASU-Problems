@@ -253,7 +253,7 @@ def should_retry_http_error(status_code, payload):
     return status_code in RETRYABLE_HTTP_STATUS
 
 
-def execute_with_retry(model_endpoint, prompt, model_name="gemini-3-flash-preview", max_retries=5, max_output_tokens=8192, diagnostics_path=None):
+def execute_with_retry(model_endpoint, prompt, model_name="gemini-3.5-flash", max_retries=5, max_output_tokens=8192, diagnostics_path=None):
     delay = 2
     url = model_endpoint.rstrip("/") + "/generate"
     request_body = json.dumps({
@@ -371,7 +371,7 @@ def build_repaired_script(layout_text, model_output):
 def main():
     parser = argparse.ArgumentParser(description="Vertex AI Express Mode starter benchmark agent")
     parser.add_argument("info_json", help="Benchmark case metadata JSON produced by scripts/run_block_benchmark.py")
-    parser.add_argument("--model", default="gemini-3-flash-preview")
+    parser.add_argument("--model", default="gemini-3.5-flash")
     parser.add_argument("--max-retries", type=int, default=5)
     parser.add_argument("--max-output-tokens", type=int, default=8192)
     args = parser.parse_args()

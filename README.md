@@ -12,10 +12,15 @@ agent/
 scripts/
   run_block_benchmark.py            Case generation and agent runner
   model_service.py                  Benchmark model service and token recorder
+  benchmark_common.py               Shared runner/evaluator helpers
 evaluator/
   evaluate_repair.py                Block repair factor calculator
   check_connectivity.py             Connectivity preservation checker
   README.md                         Evaluation factor definitions
+official_eval/
+  run_official_eval.py              Docker-isolated organizer evaluation runner
+  Dockerfile                        Official evaluation Python image
+  README.md                         Organizer evaluation instructions
 testcase/asap7/
   asap7.lydrc                       ASAP7 block DRC rule deck
   asap7.lyp                         KLayout layer properties
@@ -37,19 +42,21 @@ Install the system and Python dependencies listed in [DEPENDENCIES.md](./DEPENDE
 Create a Python environment and install the Python packages:
 
 ```bash
-cd ASU-Problems
+cd problem-categories/ICLAD26-ASU-Problems
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Set your Vertex AI Express Mode API key:
+Set your Vertex AI Express Mode API key when using the default Vertex-backed model service:
 
 ```bash
 export EXPRESS_MODE_KEY="your_actual_api_key_here"
 ```
 
 Keep API keys and credentials outside the repository. Local `.env` files and common credential filenames are ignored by default.
+
+This key is not required when using `--upstream-endpoint` to forward development runs to your own model service.
 
 ## Prepare A Benchmark Case
 
@@ -95,6 +102,11 @@ usage/vertexai-express/block/repair/BlockN_usage.json
 
 The usage report includes `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `thoughts_tokens`, `tool_use_prompt_tokens`, `total_tokens`, and `num_calls`.
 
+For official evaluation, usage and scoring artifacts must be written outside
+the participant-writable workspace. The public repository writes `usage/` and
+`factors/` locally for development convenience, but the evaluation machine
+should protect those directories from submitted agent code.
+
 A basic successful run produces a non-empty repaired script. For `Block1`, check:
 
 ```bash
@@ -105,7 +117,7 @@ python3 -m py_compile result/vertexai-express/block/repair/Block1/Block1_repaire
 Use `--model` to select a different Express Mode model:
 
 ```bash
-python3 scripts/run_block_benchmark.py --case Block1 --model gemini-3-flash-preview
+python3 scripts/run_block_benchmark.py --case Block1 --model gemini-3.5-flash
 ```
 
 Use `--run-id` to keep outputs from different agents or runs separate:
@@ -119,6 +131,18 @@ Use `--agent-path` to run a custom agent from your local copy:
 ```bash
 python3 scripts/run_block_benchmark.py --case Block1 --agent-path agent/my_agent.py --run-id my-agent-v1
 ```
+
+Use `--upstream-endpoint` during development to test with your own model service:
+
+```bash
+python3 scripts/run_block_benchmark.py \
+  --case Block1 \
+  --agent-path agent/my_agent.py \
+  --run-id my-agent-v1 \
+  --upstream-endpoint http://127.0.0.1:9000
+```
+
+The participant agent still receives the local benchmark wrapper URL in `info.json` as `model_endpoint`. The wrapper forwards to the development upstream and records usage. The deprecated `--model-endpoint` flag is accepted as an alias for `--upstream-endpoint`; it no longer writes a participant endpoint directly into `info.json`.
 
 ## Calculate Evaluation Factors
 
@@ -177,8 +201,39 @@ future update.
 
 See [evaluator/README.md](./evaluator/README.md) for factor definitions.
 
+## Official Organizer Evaluation
+
+Organizers can use the Docker-isolated official path in
+[`official_eval/`](./official_eval/). It keeps the participant agent on an
+internal Docker network while the trusted model wrapper owns the model API key.
+Run without `--case` to evaluate every complete block for a submission.
+
+## Final Submission Package
+
+Submit a directory with this shape:
+
+```text
+submission/
+  agent.py
+  requirements.txt    optional
+  README.md           optional
+```
+
+The submitted agent must run with:
+
+```bash
+python3 agent.py <info_json> --model <model_name>
+```
+
+`agent.py` must read the paths in `info.json`, call `model_endpoint` for model
+requests, and write the repaired KLayout Python script to `output_path`. Do not
+include API keys, local credentials, generated benchmark outputs, virtual
+environments, or cache directories in the submission.
+
 ## Build Your Own Agent
 
 The included Vertex AI Express Mode starter agent demonstrates the required interface. In a local copy of the benchmark, participants can point the runner at their own agent as long as it reads the case `info.json`, uses the benchmark model endpoint listed there, uses the file paths listed there, and writes the repaired Python script to the specified `output_path`.
+
+Development upstreams are allowed for local testing through `--upstream-endpoint`. Official evaluation can omit that flag so all calls use the evaluator-provided backend behind the same benchmark wrapper API.
 
 See [AGENT_GUIDE.md](./AGENT_GUIDE.md) for the expected agent interface, an explanation of how file access works, and Vertex AI Express Mode setup steps.
